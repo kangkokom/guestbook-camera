@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Kamera Buku Tamu</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, -apple-system, Segoe UI, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f1f5f9; color: #0f172a; }
+    main { max-width: 620px; margin: 0 auto; padding: 22px; }
+    .panel { background: white; border: 1px solid #cbd5e1; border-radius: 20px; padding: 20px; box-shadow: 0 10px 28px #0f172a12; }
+    h1 { margin: 0 0 8px; font-size: 1.4rem; }
+    p { color: #475569; line-height: 1.5; }
+    .stage { overflow: hidden; background: #0f172a; border-radius: 14px; aspect-ratio: 4/3; display: grid; place-items: center; }
+    video, img { display: block; width: 100%; height: 100%; object-fit: cover; }
+    video { transform: scaleX(-1); }
+    .preview { aspect-ratio: 1/1; max-height: 360px; }
+    .buttons { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+    button { border: 0; border-radius: 11px; padding: 12px 16px; font-weight: 700; cursor: pointer; }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    .primary { color: white; background: #2563eb; }
+    .success { color: white; background: #059669; }
+    .muted { background: #e2e8f0; color: #0f172a; }
+    .status { padding: 11px 12px; border-radius: 10px; background: #eff6ff; color: #1e40af; font-size: .92rem; }
+    .hidden { display: none !important; }
+    .hint { font-size: .84rem; }
+  </style>
+</head>
+<body>
+<main>
+  <section class="panel">
+    <h1>📷 Kamera Buku Tamu</h1>
+    <p>Izinkan akses kamera pada browser. Atur posisi tamu, lalu pilih <b>Ambil Foto</b>. Foto akan dikirim kembali ke formulir Buku Tamu yang membuka halaman ini.</p>
+    <div id="status" class="status" role="status">Menyiapkan halaman kamera…</div>
+    <div id="liveStage" class="stage" style="margin-top:14px">
+      <video id="video" autoplay muted playsinline></video>
+    </div>
+    <div id="previewStage" class="stage preview hidden" style="margin-top:14px">
+      <img id="preview" alt="Pratinjau foto yang akan dikirim">
+    </div>
+    <div class="buttons">
+      <button id="startBtn" class="primary" type="button">Aktifkan Webcam</button>
+      <button id="captureBtn" class="success" type="button" disabled>Ambil Foto</button>
+      <button id="retakeBtn" class="muted hidden" type="button">Ulangi Foto</button>
+      <button id="sendBtn" class="primary hidden" type="button">Gunakan Foto Ini</button>
+      <button id="closeBtn" class="muted" type="button">Tutup</button>
+    </div>
+    <p class="hint">Privasi: kamera hanya aktif setelah Anda mengizinkannya. Foto tidak dikirim sebelum Anda memilih “Gunakan Foto Ini”.</p>
+    <canvas id="canvas" class="hidden"></canvas>
+  </section>
+</main>
+<script>
+(() => {
+  const params = new URLSearchParams(location.search);
+  const nonce = params.get('nonce') || '';
+  const returnOrigin = params.get('returnOrigin') || '';
+  const statusBox = document.getElementById('status');
+  const video = document.getElementById('video');
+  const canvas = document.getElementById('canvas');
+  const preview = document.getElementById('preview');
+  const liveStage = document.getElementById('liveStage');
+  const previewStage = document.getElementById('previewStage');
+  const startBtn = document.getElementById('startBtn');
+  const captureBtn = document.getElementById('captureBtn');
+  const retakeBtn = document.getElementById('retakeBtn');
+  const sendBtn = document.getElementById('sendBtn');
+  const closeBtn = document.getElementById('closeBtn');
+  let stream = null;
+  let imageData = '';
+
+  function setStatus(text) { statusBox.textContent = text; }
+  function stopCamera() {
+    if (stream) stream.getTracks().forEach(track => track.stop());
+    stream = null;
+    video.srcObject = null;
+    captureBtn.disabled = true;
+  }
+  function validReturnTarget() {
+    try {
+      const u = new URL(returnOrigin);
+      const trustedGoogleOrigin = u.protocol === 'https:' && (
+        u.hostname === 'script.google.com' ||
+        u.hostname === 'script.googleusercontent.com' ||
+        u.hostname.endsWith('.script.googleusercontent.com')
+      );
+      return trustedGoogleOrigin && !!nonce && !!window.opener;
+    } catch (e) { return false; }
+  }
+  async function startCamera() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setStatus('Browser tidak menyediakan akses kamera. Pastikan halaman dibuka dari HTTPS dan gunakan Chrome versi terbaru.');
+      return;
+    }
+    stopCamera();
+    try {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'user' }, width: { ideal: 960 }, height: { ideal: 720 } } });
+      } catch (e) {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: true });
+      }
+      video.srcObject = stream;
+      await video.play();
+      captureBtn.disabled = false;
+      setStatus('Webcam aktif. Atur posisi tamu, lalu klik “Ambil Foto”.');
+    } catch (e) {
+      const messages = {
+        NotAllowedError: 'Izin kamera ditolak. Klik ikon pengaturan di alamat website, izinkan Camera, lalu coba lagi.',
+        NotFoundError: 'Webcam tidak ditemukan. Periksa sambungan kamera komputer.',
+        NotReadableError: 'Webcam sedang dipakai aplikasi lain. Tutup aplikasi kamera/meeting lain, lalu coba lagi.'
+      };
+      setStatus(messages[e.name] || ('Kamera gagal dibuka: ' + (e.message || e.name)));
+    }
+  }
+  function capture() {
+    if (!video.videoWidth || !video.videoHeight) { setStatus('Gambar belum siap. Tunggu sebentar lalu coba lagi.'); return; }
+    const side = Math.min(video.videoWidth, video.videoHeight);
+    const sx = Math.round((video.videoWidth - side) / 2);
+    const sy = Math.round((video.videoHeight - side) / 2);
+    canvas.width = 600; canvas.height = 600;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, sx, sy, side, side, 0, 0, 600, 600);
+    imageData = canvas.toDataURL('image/jpeg', 0.82);
+    preview.src = imageData;
+    stopCamera();
+    liveStage.classList.add('hidden');
+    previewStage.classList.remove('hidden');
+    captureBtn.classList.add('hidden');
+    startBtn.classList.add('hidden');
+    retakeBtn.classList.remove('hidden');
+    sendBtn.classList.remove('hidden');
+    setStatus('Periksa pratinjau. Klik “Gunakan Foto Ini” untuk mengirim foto ke formulir Buku Tamu.');
+  }
+  function retake() {
+    imageData = '';
+    liveStage.classList.remove('hidden');
+    previewStage.classList.add('hidden');
+    captureBtn.classList.remove('hidden');
+    startBtn.classList.remove('hidden');
+    retakeBtn.classList.add('hidden');
+    sendBtn.classList.add('hidden');
+    startCamera();
+  }
+  function sendPhoto() {
+    if (!validReturnTarget()) {
+      setStatus('Tidak ada formulir Buku Tamu yang membuka halaman ini. Tutup halaman ini dan klik Buka Webcam dari aplikasi Buku Tamu.');
+      return;
+    }
+    try {
+      window.opener.postMessage({ type: 'GUESTBOOK_CAMERA_RESULT', nonce, imageData }, returnOrigin);
+      setStatus('Foto dikirim. Anda dapat kembali ke formulir Buku Tamu.');
+      sendBtn.disabled = true;
+      setTimeout(() => window.close(), 700);
+    } catch (e) {
+      setStatus('Foto tidak berhasil dikirim ke formulir. Biarkan jendela ini terbuka dan coba lagi.');
+    }
+  }
+  startBtn.addEventListener('click', startCamera);
+  captureBtn.addEventListener('click', capture);
+  retakeBtn.addEventListener('click', retake);
+  sendBtn.addEventListener('click', sendPhoto);
+  closeBtn.addEventListener('click', () => { stopCamera(); window.close(); });
+  window.addEventListener('beforeunload', stopCamera);
+  if (!validReturnTarget()) {
+    setStatus('Buka halaman ini melalui tombol “Buka Webcam” pada aplikasi Buku Tamu. Jangan membuka URL kamera secara langsung.');
+    startBtn.disabled = true;
+  } else {
+    setStatus('Siap. Klik “Aktifkan Webcam” untuk memulai.');
+  }
+})();
+</script>
+</body>
+</html>
